@@ -1,0 +1,68 @@
+name: Terraform CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  terraform:
+    name: Terraform Validation
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.0
+
+      # Validate production configuration without accessing its backend.
+      - name: Production Terraform Format Check
+        run: terraform -chdir=terraform/prod fmt -check -recursive
+
+      - name: Production Terraform Init
+        run: terraform -chdir=terraform/prod init -backend=false -input=false
+
+      - name: Production Terraform Validate
+        run: terraform -chdir=terraform/prod validate
+
+      # Existing dev checks and plan.
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
+
+      - name: Test AWS Identity
+        run: aws sts get-caller-identity
+
+      - name: Terraform Format Check
+        run: terraform -chdir=terraform/dev fmt -check -recursive
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform/dev init -input=false
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform/dev validate
+
+      - name: Check GitHub OIDC Environment
+        run: |
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Ref: $GITHUB_REF"
+          echo "Event: $GITHUB_EVENT_NAME"
+          echo "Actor: $GITHUB_ACTOR"
+
+      - name: Terraform Plan
+        run: terraform -chdir=terraform/dev plan -var="environment=dev" -lock-timeout=5m

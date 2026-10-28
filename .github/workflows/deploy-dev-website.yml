@@ -1,0 +1,81 @@
+
+name: Deploy Dev Website
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-website-dev
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev-website:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.0
+
+      - name: Initialise Terraform
+        run: terraform -chdir=terraform/dev init -input=false
+
+      - name: Read deployment resources
+        id: deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET_NAME="$(terraform -chdir=terraform/dev output -raw bucket_name)"
+          DISTRIBUTION_ID="$(terraform -chdir=terraform/dev output -raw cloudfront_distribution_id)"
+
+          if [[ -z "$BUCKET_NAME" || -z "$DISTRIBUTION_ID" ]]; then
+            echo "Terraform returned an empty bucket name or distribution ID."
+            exit 1
+          fi
+
+          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$DISTRIBUTION_ID" >> "$GITHUB_OUTPUT"
+
+          STATUS="$(aws cloudfront get-distribution \
+            --id "$DISTRIBUTION_ID" \
+            --query 'Distribution.Status' \
+            --output text)"
+
+          if [[ "$STATUS" != "Deployed" ]]; then
+            echo "CloudFront distribution is not ready, Current status: $STATUS"
+            exit 1
+          fi
+
+      - name: Upload website to dev S3
+        run: |
+          aws s3 sync website/ \
+            "s3://${{steps.deployment.outputs.bucket_name}}/" \
+            --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{steps.deployment.outputs.distribution_id}}" \
+            --paths "/*"
+
+      - name: Deployment summary
+        run: |
+          echo "Website deployment completed successfully."
+          echo "S3 bucket: ${{steps.deployment.outputs.bucket_name}}"
+          echo "CloudFront distribution: ${{steps.deployment.outputs.distribution_id}}"

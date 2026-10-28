@@ -1,0 +1,100 @@
+name: Deploy Production Website
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-website-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-prod-website:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.0
+
+      - name: Initialise Terraform
+        run: terraform -chdir=terraform/prod init -input=false
+
+      - name: Read production resources
+        id: production
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET_NAME="$(terraform -chdir=terraform/prod output -raw bucket_name)"
+          DISTRIBUTION_ID="$(terraform -chdir=terraform/prod output -raw cloudfront_distribution_id)"
+
+          if [[ -z "$BUCKET_NAME" || -z "$DISTRIBUTION_ID" ]]; then
+            echo "Terraform returned an empty bucket name or distribution ID."
+            exit 1
+          fi
+
+          echo "bucket_name=$BUCKET_NAME" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$DISTRIBUTION_ID" >> "$GITHUB_OUTPUT"
+
+          STATUS="$(aws cloudfront get-distribution \
+            --id "$DISTRIBUTION_ID" \
+            --query 'Distribution.Status' \
+            --output text)"
+
+          if [[ "$STATUS" != "Deployed" ]]; then
+            echo "CloudFront distribution is not ready, Current status: $STATUS"
+            exit 1
+          fi
+
+          echo "Production resources verified."
+
+      - name: Upload website to production S3
+        run: |
+          aws s3 sync website/ \
+            "s3://${{ steps.production.outputs.bucket_name }}/" \
+            --delete
+
+      - name: Invalidate CloudFront cache
+        id: invalidate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          INVALIDATION_ID="$(aws cloudfront create-invalidation \
+            --distribution-id "${{steps.production.outputs.distribution_id}}"\
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)"
+
+          echo "invalidation_id=$INVALIDATION_ID" >> "$GITHUB_OUTPUT"
+          echo "Created invalidation: $INVALIDATION_ID"
+
+      - name: Wait for cache invalidation
+        run: |
+          aws cloudfront wait invalidation-completed \
+            --distribution-id "${{steps.production.outputs.distribution_id}}" \
+            --id "${{ steps.invalidate.outputs.invalidation_id }}"
+
+      - name: Deployment summary
+        run: |
+          echo "Production deployment completed successfully."
+          echo "Website: https://adeemakhtar.com"
+          echo "S3 bucket: ${{steps.production.outputs.bucket_name}}"
+          echo "CloudFront distribution: ${{steps.production.outputs.distribution_id}}"

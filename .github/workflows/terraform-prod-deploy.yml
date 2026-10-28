@@ -1,0 +1,48 @@
+name: Terraform Prod Architecture Deploy
+
+on:
+  workflow_dispatch:
+
+
+
+concurrency:
+  group: terraform-prod
+  cancel-in-progress: false
+
+jobs:
+  terraform-deploy: 
+    name: Terraform Prod Apply
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.13.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          audience: sts.amazonaws.com
+
+      - name: Test AWS Identity
+        run: aws sts get-caller-identity
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform/prod init
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform/prod validate
+
+      - name: Terraform Apply
+        run: terraform -chdir=terraform/prod apply -auto-approve -lock-timeout=5m
