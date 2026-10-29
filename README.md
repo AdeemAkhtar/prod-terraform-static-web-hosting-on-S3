@@ -49,7 +49,10 @@ flowchart TD
 
     IAM --> SYNC[AWS CLI S3 Sync]
     SYNC --> INFRA
-    INFRA --> VISITOR[Website Visitors]
+    INFRA --> ROUTE53+ACM[Route 53 and ACM]
+    
+    ROUTE53+ACM --> VISITOR[Website Visitors]
+    
 ```
 
 The diagram illustrates the intended separation of responsibilities. The exact workflow triggers and steps should be checked against the current YAML files.
