@@ -6,7 +6,7 @@ An Infrastructure as Code (IaC) project demonstrating how to provision AWS infra
 
 The project focuses on repeatable infrastructure management, secure CI/CD authentication, remote Terraform state, and separating infrastructure changes from routine website updates.
 
-**Live website:** [View the deployed website](https://adeemakhtar.com/)
+**Live website:** [View the deployed website https://www.adeemakhtar.com](https://adeemakhtar.com/)
 
 ![<# alt text #>](ScreenShots/Website.png "Screenshot")
 
